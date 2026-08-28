@@ -1,0 +1,13 @@
+{
+  "name": "ctrader-gold-connector",
+  "version": "1.0.0",
+  "description": "Persistent cTrader Open API connector exposing candle data over HTTP, in the same shape gold.php expects from Twelve Data.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@reiryoku/ctrader-layer": "^2.2.0",
+    "express": "^4.19.2"
+  }
+}
