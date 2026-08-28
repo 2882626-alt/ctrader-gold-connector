@@ -47,10 +47,20 @@ const INTERVAL_TO_PERIOD = {
 };
 
 // How many minutes back to request per interval, generous enough for 500+ candles
+// (kept modest — very wide ranges for 4h/1day can be rejected by cTrader in a
+// single request, which caused the "Failed to refresh 4h/1day" errors)
 const LOOKBACK_MINUTES = {
   '1min': 60 * 12, '5min': 60 * 60, '15min': 60 * 24 * 8, '30min': 60 * 24 * 16,
-  '1h': 60 * 24 * 32, '4h': 60 * 24 * 130, '1day': 60 * 24 * 800,
+  '1h': 60 * 24 * 25, '4h': 60 * 24 * 90, '1day': 60 * 24 * 500,
 };
+
+// cTrader's protobuf library returns 64-bit fields (timestamps, low prices) as
+// "Long" objects, not plain numbers. Dividing a Long directly produces garbage
+// (this is what caused the garbled prices like 44549900.02 on the first run).
+// Number(x) safely converts either a plain number or a Long to a real number.
+function toNum(value) {
+  return Number(value);
+}
 
 let connection = null;
 let ctidTraderAccountId = null;
@@ -147,11 +157,12 @@ async function fetchTrendbars(interval) {
   const bars = res.trendbar || [];
 
   const candles = bars.map(bar => {
-    const low = bar.low / 100000;
-    const open = (bar.low + (bar.deltaOpen || 0)) / 100000;
-    const high = (bar.low + (bar.deltaHigh || 0)) / 100000;
-    const close = (bar.low + (bar.deltaClose || 0)) / 100000;
-    const datetime = new Date(bar.utcTimestampInMinutes * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    const low = toNum(bar.low) / 100000;
+    const open = (toNum(bar.low) + toNum(bar.deltaOpen || 0)) / 100000;
+    const high = (toNum(bar.low) + toNum(bar.deltaHigh || 0)) / 100000;
+    const close = (toNum(bar.low) + toNum(bar.deltaClose || 0)) / 100000;
+    const timestampMs = toNum(bar.utcTimestampInMinutes) * 60 * 1000;
+    const datetime = new Date(timestampMs).toISOString().slice(0, 19).replace('T', ' ');
 
     return { datetime, open, high, low, close };
   });
@@ -190,7 +201,10 @@ async function refreshInterval(interval) {
     candleCache[interval] = await fetchTrendbars(interval);
     log(`Refreshed ${interval}: ${candleCache[interval].candles_count} candles, latest close ${candleCache[interval].latest?.close}`);
   } catch (err) {
-    log(`Failed to refresh ${interval}:`, err.message);
+    // Print the full error, not just err.message — some cTrader error
+    // responses don't populate .message, which is why this showed as
+    // "undefined" before.
+    log(`Failed to refresh ${interval}:`, err && err.message ? err.message : JSON.stringify(err));
   }
 }
 
