@@ -196,22 +196,35 @@ const REFRESH_EVERY_MS = {
   '1h': 180000, '4h': 600000, '1day': 1800000,
 };
 
-async function refreshInterval(interval) {
+async function refreshInterval(interval, isRetry = false) {
   try {
     candleCache[interval] = await fetchTrendbars(interval);
     log(`Refreshed ${interval}: ${candleCache[interval].candles_count} candles, latest close ${candleCache[interval].latest?.close}`);
   } catch (err) {
-    // Print the full error, not just err.message — some cTrader error
-    // responses don't populate .message, which is why this showed as
-    // "undefined" before.
-    log(`Failed to refresh ${interval}:`, err && err.message ? err.message : JSON.stringify(err));
+    const message = err && err.message ? err.message : JSON.stringify(err);
+    log(`Failed to refresh ${interval}:`, message);
+
+    // If we got rate-limited specifically, wait a bit and try once more —
+    // this is normal occasionally, not a sign anything is broken.
+    if (!isRetry && message.includes('rate limited')) {
+      log(`Retrying ${interval} in 10s after rate limit...`);
+      setTimeout(() => refreshInterval(interval, true), 10000);
+    }
   }
 }
 
 function startRefreshLoops() {
-  Object.keys(INTERVAL_TO_PERIOD).forEach(interval => {
-    refreshInterval(interval); // fetch immediately on startup
-    setInterval(() => refreshInterval(interval), REFRESH_EVERY_MS[interval]);
+  const intervals = Object.keys(INTERVAL_TO_PERIOD);
+
+  // Stagger the initial fetches instead of firing all 7 at once — cTrader
+  // rate-limits bursts of heavy historical requests (this is what caused
+  // "BLOCKED_PAYLOAD_TYPE / You are being rate limited" on 4h and 1day,
+  // which both request a lot of history in one shot).
+  intervals.forEach((interval, index) => {
+    setTimeout(() => {
+      refreshInterval(interval);
+      setInterval(() => refreshInterval(interval), REFRESH_EVERY_MS[interval]);
+    }, index * 3000); // 3 seconds apart
   });
 }
 
